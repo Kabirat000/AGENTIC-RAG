@@ -3,6 +3,7 @@
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse   # <-- added
 from pydantic import BaseModel
 import rag  # imports your functions; rag.py won't run its CLI because __name__ != "__main__"
 
@@ -20,13 +21,10 @@ class AskPayload(BaseModel):
     source: str | None = None   # optional filename/URL substring to lock retrieval
     k: int = 50                 # how many chunks when source-locked; generic path uses 15
 
-# -------- Friendly homepage so "/" isn't 404 ----------
-@app.get("/")
+# -------- Redirect "/" -> "/docs" so home isn't 404 ----------
+@app.get("/", include_in_schema=False)
 def home():
-    return {
-        "msg": "Agentic RAG API is running. Use /docs for Swagger UI.",
-        "endpoints": ["/health", "/ingest/docs", "/ask", "/docs"]
-    }
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 def health():
