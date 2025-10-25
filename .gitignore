@@ -1,18 +1,30 @@
-# Python
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
 
-# Virtual env
+# --- Virtual env ---
 .venv/
 
-# OS/IDE
+# --- OS/Editor junk ---
 .DS_Store
+Thumbs.db
 .vscode/
 
-# Secrets
-.env
-
-# Misc
+# --- Logs & runtime ---
 *.log
+*.sqlite3
+
+# --- Secrets (DO NOT COMMIT) ---
 .env
 *.env
+
+# --- Local data/docs (keep out of git) ---
+docs/*.pdf
+docs/*.txt
+uploads/
+data/

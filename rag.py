@@ -1,6 +1,7 @@
 # --- Minimal Agentic RAG (Gemini 2.x + Qdrant) --------------------------------
 # Supports .txt AND .pdf in ./docs
-# Agentic query rewrite + source-locked retrieval + keyword rerank + summary-aware prompt
+# Agentic query rewrite + source-locked retrieval + learned rerank + summary-aware prompt
+# + Optional Tavily web-search fallback (keeps same ctx schema) and DOC/WEB tagging
 
 import os, glob, hashlib, sys
 from dotenv import load_dotenv
@@ -8,6 +9,59 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 import google.generativeai as genai
 from pypdf import PdfReader  # PDF support
+
+# -------------------- Settings --------------------
+load_dotenv()
+
+API_KEY = os.environ.get("GOOGLE_API_KEY")
+if not API_KEY:
+    print("ERROR: GOOGLE_API_KEY is missing in .env"); sys.exit(1)
+genai.configure(api_key=API_KEY)
+
+# Single, explicit model choice (override with .env: GEN_MODEL=gemini-2.5-flash, etc.)
+MODEL_NAME = os.environ.get("GEN_MODEL", "gemini-2.0-flash")
+
+COL = os.environ.get("QDRANT_COLLECTION", "docs")
+QURL = os.environ.get("QDRANT_URL", "http://localhost:6333")
+qdrant = QdrantClient(url=QURL)
+
+# Optional Tavily web search
+TAVILY_KEY = os.environ.get("TAVILY_API_KEY")
+tavily = None
+if TAVILY_KEY:
+    try:
+        from tavily import TavilyClient
+        tavily = TavilyClient(api_key=TAVILY_KEY)
+    except Exception as _e:
+        # Keep running even if Tavily isn't installed
+        tavily = None
+
+def web_search_snippets(q: str, k: int = 5):
+    """Return web snippets in the same schema as ctxs; only if Tavily is configured."""
+    if not tavily:
+        return []
+    try:
+        res = tavily.search(q, max_results=k)
+    except Exception:
+        return []
+    out = []
+    for item in res.get("results", []):
+        out.append({
+            "text": (item.get("content") or item.get("snippet") or "")[:1000],
+            "source": item.get("url") or "web",
+            "chunk_id": None,
+        })
+    return out
+
+# Learned reranker (Cross-Encoder)
+from sentence_transformers import CrossEncoder
+RERANK_MODEL = os.environ.get("RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
+_cross = None
+def get_cross():
+    global _cross
+    if _cross is None:
+        _cross = CrossEncoder(RERANK_MODEL)
+    return _cross
 
 # --- relevance bump for cash-out topics (and general off-ramp terms)
 CASHOUT_KEYS = [
@@ -18,18 +72,6 @@ CASHOUT_KEYS = [
 def keyword_boost(text: str) -> int:
     t = text.lower()
     return sum(k in t for k in CASHOUT_KEYS)
-
-# -------------------- 0) Load settings & init clients -------------------------
-load_dotenv()
-
-API_KEY = os.environ.get("GOOGLE_API_KEY")
-if not API_KEY:
-    print("ERROR: GOOGLE_API_KEY is missing in .env"); sys.exit(1)
-genai.configure(api_key=API_KEY)
-
-COL = os.environ.get("QDRANT_COLLECTION", "docs")
-QURL = os.environ.get("QDRANT_URL", "http://localhost:6333")
-qdrant = QdrantClient(url=QURL)
 
 # -------------------- 1) Ensure collection exists -----------------------------
 def ensure_collection():
@@ -47,7 +89,8 @@ def embed(text: str):
     return genai.embed_content(model="text-embedding-004", content=text)["embedding"]
 
 # -------------------- 2.5) Agentic step: rewrite vague queries ----------------
-def rewrite_query(q: str, model_name: str = "gemini-2.0-flash"):
+def rewrite_query(q: str, model_name: str | None = None):
+    model_name = model_name or MODEL_NAME
     prompt = (
         "You are a query rewriter for document search. "
         "Rewrite the user query to be concise, specific, and self-contained. "
@@ -202,64 +245,55 @@ def retrieve_from_source(query: str, source_path: str, k: int = 30):
             break
     return picked
 
-# -------------------- 5) Pick a supported Gemini model (2.x) ------------------
-PREFS = [
-    "gemini-2.0-flash",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash-thinking-exp",
-    "gemini-2.0-flash-lite",
-    "gemini-flash-latest",
-    "gemini-pro-latest",
-]
-def pick_model():
-    try:
-        models = [m for m in genai.list_models()
-                  if "generateContent" in getattr(m, "supported_generation_methods", [])]
-        names = set(m.name.replace("models/", "") for m in models)
-        for p in PREFS:
-            if p in names:
-                return p
-        return next(iter(names)) if names else None
-    except Exception as e:
-        print(f"Could not list models: {e}")
-        return None
+# -------------------- 5) Learned reranking -----------------------------------
+def rerank(query: str, ctxs: list, top_n: int = 30):
+    """Learned rerank using CrossEncoder; returns top_n items."""
+    if not ctxs:
+        return []
+    model = get_cross()
+    pairs = [(query, c["text"]) for c in ctxs]
+    scores = model.predict(pairs)  # higher is better
+    ranked = sorted(zip(ctxs, scores), key=lambda x: x[1], reverse=True)
+    return [c for c, _ in ranked[:top_n]]
 
 # -------------------- 6) Answer with Gemini ----------------------------------
 def answer(q: str, ctxs: list):
     if not ctxs:
         return "I couldn’t find anything in the docs related to your question."
 
-    ctx = "\n\n".join(
-        f"[{i+1}] (chunk {c.get('chunk_id')}) {c['text']} (source: {c['source']})"
-        for i, c in enumerate(ctxs)
-    )
+    # Tag contexts so the prompt prefers DOC over WEB when conflicting
+    tagged_lines = []
+    for i, c in enumerate(ctxs):
+        src = str(c.get("source", ""))
+        label = "DOC" if src.lower().startswith("docs") else "WEB"
+        tagged_lines.append(
+            f"[{i+1}][{label}] (chunk {c.get('chunk_id')}) {c['text']} (source: {src})"
+        )
+    ctx = "\n\n".join(tagged_lines)
 
     q_lower = q.lower()
     wants_summary = any(w in q_lower for w in ["summary", "summarize", "overview", "bullet"])
 
     if wants_summary:
         instruct = (
-            "From the CONTEXT, produce exactly 5 concise bullets that summarize HOW TO CASH OUT CRYPTOCURRENCY. "
+            "Use only the CONTEXT. Prefer DOC over WEB if there is any conflict. "
+            "Produce exactly 5 concise bullets that summarize HOW TO CASH OUT CRYPTOCURRENCY. "
             "Focus on: (1) cash-out methods (CEX, P2P, Bitcoin ATMs, crypto cards), "
             "(2) step-by-step flow, (3) fees/limits, (4) risks/scams & safety, "
-            "(5) KYC/AML or legal considerations. Do not invent facts. Cite chunks like [1], [2]."
+            "(5) KYC/AML or legal considerations. Do not invent facts. Cite [n]."
         )
     else:
         instruct = (
-            "Use only the CONTEXT to answer. Be precise and brief. "
-            "If the answer is not in CONTEXT, say you don't know. Cite chunks like [1], [2]."
+            "Use only the CONTEXT. Prefer DOC over WEB if there is any conflict. "
+            "Be precise and brief. If not found in CONTEXT, say you don't know. Cite [n]."
         )
 
     prompt = f"{instruct}\n\nQ: {q}\n\nCONTEXT:\n{ctx}"
 
-    model_name = pick_model()
-    if not model_name:
-        return "No generation models available for your API key. Check Google AI Studio access."
-
     try:
-        return genai.GenerativeModel(model_name).generate_content(prompt).text
+        return genai.GenerativeModel(MODEL_NAME).generate_content(prompt).text
     except Exception as e:
-        return f"Model error with {model_name}: {e}"
+        return f"Model error with {MODEL_NAME}: {e}"
 
 # -------------------- 7) CLI flow --------------------------------------------
 if __name__ == "__main__":
@@ -277,14 +311,25 @@ if __name__ == "__main__":
     source_hint = q
     src_path = guess_source_path(source_hint)
 
+    # 1) vector retrieval (overfetch for reranking)
     if src_path:
         print(f"Locking retrieval to: {src_path}")
-        ctxs = retrieve_from_source(q_rewritten, src_path, k=50)  # larger k for summaries
+        ctxs = retrieve_from_source(q_rewritten, src_path, k=50)
     else:
-        ctxs = retrieve(q_rewritten, k=15)
+        ctxs = retrieve(q_rewritten, k=50)
 
-    # keyword-based rerank to prioritize cash-out related chunks
-    ctxs = sorted(ctxs, key=lambda c: keyword_boost(c["text"]), reverse=True)[:50]
+    # 2) optional web fallback (if empty OR user hints at web)
+    if (not ctxs) or any(w in q.lower() for w in ["web", "internet", "online"]):
+        web_ctxs = web_search_snippets(q_rewritten, k=5)
+        if web_ctxs:
+            print(f"Added {len(web_ctxs)} web snippets.")
+            ctxs = (ctxs or []) + web_ctxs
+
+    # 3) learned rerank for relevance
+    ctxs = rerank(q_rewritten, ctxs, top_n=30)
+
+    # 4) light keyword bump as tiebreaker (keep top 30)
+    ctxs = sorted(ctxs, key=lambda c: keyword_boost(c["text"]), reverse=True)[:30]
 
     # Debug: show what came back
     print("\nTop sources:")

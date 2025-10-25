@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+python-dotenv
+qdrant-client
+google-generativeai
+pypdf
+sentence-transformers
+torch
+tavily-python
