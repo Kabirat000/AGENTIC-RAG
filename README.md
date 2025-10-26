@@ -1,90 +1,149 @@
-# Agentic RAG Compliance Assistant (Local Prototype)
+# Agentic RAG Assistant (Local Prototype)
 
-This is a local Retrieval-Augmented Generation (RAG) system focused on crypto off-ramp / KYC / AML / compliance questions.
+This is a local Retrieval-Augmented Generation (RAG) system that can answer questions using your own documents, optionally enrich those answers with relevant web context, and generate cited, auditable responses.
+
+It’s designed for domains where accuracy and traceability matter (policies, procedures, compliance, onboarding, risk analysis, internal knowledge bases, etc.), but it can adapt to any topic. Whatever you put in `./docs` becomes its knowledge.
 
 It can:
 - Ingest your own PDFs / text docs.
 - Retrieve the most relevant chunks from those docs.
-- Optionally blend in fresh web research (via Tavily).
-- Rerank results using a learned cross-encoder.
+- Optionally blend in fresh web snippets (via Tavily).
+- Rerank results using a learned cross-encoder (not just vector similarity).
 - Generate a final answer with citations.
 - Choose between a fast model (Gemini) and a deeper reasoning model (Groq).
 
 Everything runs locally right now (FastAPI + Qdrant in Docker).  
-No public deployment required.
+No public cloud deployment is required.
 
 ---
 
-## 🔍 What this solves
+## 🔍 Why this is not “just another RAG demo”
 
-Typical RAG demos just do “retrieve top 3 chunks and stuff them into an LLM.”  
-This project goes further in ways that actually matter for compliance/off-ramp use cases:
+Most basic RAG = “embed doc → semantic search → dump chunks into an LLM.”
 
-1. **Agentic Query Rewrite**  
-   - User asks something vague like:  
-     “what should we warn users about cashing out?”  
-   - System rewrites it into something retrieval-friendly:  
-     “crypto off-ramp withdrawal fraud and AML obligations when sending large amounts to bank”
-   - This makes vector search way more accurate.
+This system adds multiple production-style steps:
 
-2. **Blended Context: Internal Docs + Web**  
-   - You can ingest internal policy / training docs in `./docs/`.
-   - If needed, the system also fetches recent web info (via Tavily).
-   - Both are merged into a single context with DOC / WEB tags.
-   - The LLM is told: **use DOC when it conflicts with WEB.**
-   - This is important for compliance: your policy should override the internet.
+### 1. Agentic Query Rewrite
+Before we even retrieve, we rewrite the user’s question using Gemini to:
+- make it self-contained,
+- add obvious keywords,
+- remove vague pronouns like “this” / “that.”
 
-3. **Learned Reranking + Domain Boost**  
-   - After retrieval, we rerank using a cross-encoder (`sentence-transformers`) instead of relying only on vector similarity.
-   - Then we boost chunks that mention risky terms like `withdrawal`, `KYC`, `AML`, `bank`, `limits`, `fraud`, etc.
-   - Result: compliance-relevant content surfaces first.
+Example:
+> User asks: "what are the rules before payout?"  
+> Rewrite becomes: "payout approval rules and required checks before releasing funds to user bank account"
 
-4. **Two “Brains”: Fast vs Deep**  
-   - `reasoner = "gemini"` → fast answer using Gemini.
-   - `reasoner = "groq"` → deeper reasoning answer using a Groq-hosted LLaMA model.
-   - If Groq is not configured or fails, it silently falls back to Gemini.
-   - You can see which model answered in the API response.
-
-5. **Citations + Traceability**  
-   - Final answers come with `[1]`, `[2]`, … style citations.
-   - The API returns a `citations` map so you can inspect which source chunk each reference came from (either your doc or a web URL).
-   - You also get the ranked `contexts` that were actually fed to the LLM.
-   - This makes it auditable (“why did the AI tell me this?”).
+That rewritten query gets embedded and used for retrieval.  
+This gives you better recall from Qdrant.
 
 ---
 
-## 🧠 Architecture
+### 2. Blended Context: Local Docs + Web
+The assistant can use:
+- **Your documents** in `./docs` (PDF or TXT)
+- **Web context** via Tavily (optional)
 
-### High-level flow for `/ask`:
+Both are merged into one context list so the model sees everything at once.
 
-1. Rewrite the user question using Gemini → `question_rewritten`
-2. Embed that rewritten query using `text-embedding-004`
-3. Retrieve relevant chunks from Qdrant
-4. Optionally pull web snippets from Tavily and merge them
-5. Rerank all candidate chunks with a cross-encoder
-6. Apply domain keyword boosting (KYC / AML / cash out / off-ramp)
-7. Build a prompt that:
-   - tags each chunk as DOC or WEB
-   - enforces “prefer DOC over WEB”
-   - enforces “cite sources as [n]”
-8. Send that prompt to the chosen reasoning model:
-   - Gemini (fast mode) or
-   - Groq model (deeper mode)
-9. Return:
-   - final answer text
-   - which model wrote it
-   - contexts used
-   - citations map for UI / auditing
+Each chunk is tagged internally as `DOC` or `WEB`, and the prompt tells the model:
+
+> Prefer DOC over WEB if there's any conflict.
+
+That means your internal policy/knowledge wins over the internet.  
+This is important for accuracy and trust.
 
 ---
 
-## 🗂 Project Layout
+### 3. Learned Reranking and Domain Boost
+After getting candidate chunks, we:
+1. Rerank them using a cross-encoder model from `sentence-transformers` instead of relying only on vector distance.
+2. Apply a light keyword boost for domain-important terms.  
+   (For example, terms around review, approval, identity, fraud, limits, etc. You can customize or remove this.)
+
+Result: you get answers that surface the “important operational steps / rules / risks,” not just text that happens to be semantically similar.
+
+---
+
+### 4. Two Answering Modes (“fast vs deep”)
+When generating the final answer, you can choose the reasoning model:
+
+- `reasoner = "gemini"`  
+  Uses Gemini for a fast, cheap, responsive answer.
+
+- `reasoner = "groq"`  
+  Uses a Groq-hosted LLaMA model for more structured / analytical answers.
+
+If Groq isn't configured or fails, we silently fall back to Gemini (no ugly debug text exposed to users).
+
+The API will tell you which one was actually used.
+
+---
+
+### 5. Auditable Answers with Citations
+Every final answer comes with:
+- Inline citations like `[1]`, `[2]`, `[3]`
+- A `citations` map in the API response that tells you:
+  - which source each `[n]` came from,
+  - whether it was a local document chunk or web.
+
+The API also returns the exact ranked `contexts` that were fed to the model to produce the answer.
+
+That means you can explain why the model said what it said.
+
+This is extremely useful for:
+- internal policy assistants
+- onboarding/training assistants
+- risk/compliance review assistants
+- product support knowledge assistants
+- audit trails
+
+---
+
+## 🧠 Architecture: end-to-end flow
+
+When you call `POST /ask`, here’s what happens:
+
+1. We rewrite the user question using Gemini  
+   → `question_rewritten`
+
+2. We embed the rewritten query using `text-embedding-004` and do semantic retrieval from Qdrant.
+
+3. If requested (or if the local docs are empty), we also fetch web snippets using Tavily and merge them into the same context format.
+
+4. We rerank all candidate chunks using a cross-encoder (`sentence-transformers`).
+
+5. We apply a final priority boost for certain important terms in your domain (these keywords are customizable / removable).
+
+6. We build a prompt for the answering model that:
+   - lists each chunk as `[1][DOC]` or `[2][WEB]`
+   - includes the source path/URL
+   - instructs the model to:
+     - prefer DOC over WEB,
+     - avoid inventing facts,
+     - answer concisely,
+     - always cite sources `[n]`.
+
+7. We generate a final answer using either:
+   - Gemini (fast mode), or
+   - Groq LLaMA (deeper reasoning mode).
+
+8. We return JSON with:
+   - the answer,
+   - which model was used,
+   - all supporting chunks,
+   - the citations map.
+
+So you end up with not just “an answer,” but something you can defend and trace.
+
+---
+
+## 📂 Project Layout
 
 ```text
 .
 ├─ fastapi_app.py        # FastAPI API server
-├─ rag.py                # Core pipeline: ingest, retrieve, rerank, answer
-├─ docs/                 # Local knowledge base (.pdf, .txt)
+├─ rag.py                # Core RAG pipeline (ingest, retrieve, rerank, answer)
+├─ docs/                 # Your local knowledge base (.pdf, .txt)
 ├─ requirements.txt      # Python dependencies
-├─ .env                  # Local secrets (NOT committed)
+├─ .env                  # Your secrets (NOT committed)
 └─ README.md             # This file
