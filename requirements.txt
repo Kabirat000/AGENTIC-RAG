@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 python-dotenv
 qdrant-client
 google-generativeai
@@ -7,3 +7,4 @@ pypdf
 sentence-transformers
 torch
 tavily-python
+groq
