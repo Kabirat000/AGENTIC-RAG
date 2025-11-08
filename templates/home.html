@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Agentic RAG Console</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; line-height: 1.5; }
+    h1 { margin-bottom: 0.25rem; }
+    .card {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+      background: #fafafa;
+    }
+    label { font-weight: 600; display: block; margin-bottom: 0.4rem; }
+    input[type="text"], textarea, input[type="file"], select {
+      width: 100%;
+      padding: 0.6rem 0.8rem;
+      border: 1px solid #999;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      box-sizing: border-box;
+    }
+    button {
+      background: #4f46e5;
+      color: white;
+      padding: 0.6rem 1rem;
+      border: 0;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #4338ca;
+    }
+    .flash { padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; font-size: 0.9rem; }
+    .flash.success { background:#ecfdf5; color:#065f46; border:1px solid #34d399; }
+    .flash.error { background:#fef2f2; color:#991b1b; border:1px solid #f87171; }
+    .flash.warning { background:#fffbeb; color:#92400e; border:1px solid #facc15; }
+    small { color:#555; font-size:0.8rem; }
+  </style>
+</head>
+<body>
+
+  <h1>Agentic RAG Console</h1>
+  <p style="margin-top:0">Upload docs → Ask questions → Get cited answers.</p>
+
+  <!-- Flash messages -->
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash {{category}}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+
+  <!-- Upload card -->
+  <div class="card">
+    <h2>1. Upload Knowledge</h2>
+    <form action="{{ url_for('upload_file') }}" method="POST" enctype="multipart/form-data">
+      <label for="file">Document (.pdf, .txt, .md, .docx, .html) — max 10MB</label>
+      <input type="file" id="file" name="file" required />
+
+      <div style="margin-top:1rem;">
+        <button type="submit">Upload & Ingest</button>
+      </div>
+    </form>
+    <small>Uploaded files are embedded into Qdrant and become searchable memory.</small>
+  </div>
+
+  <!-- Ask card -->
+  <div class="card">
+    <h2>2. Ask a Question</h2>
+    <form action="{{ url_for('ask_question') }}" method="POST">
+      <label for="question">Question</label>
+      <textarea id="question" name="question" rows="3" placeholder="Example: Give me a summary of Kabirat's onboarding terms."></textarea>
+
+      <label for="source_hint" style="margin-top:1rem;">(Optional) Limit search to a specific file</label>
+      <input id="source_hint" name="source_hint" type="text" placeholder="e.g. Kabirat, numpy-user.pdf, policy, etc." />
+
+      <div style="display:flex; gap:1rem; flex-wrap:wrap; margin-top:1rem;">
+        <label style="display:flex; align-items:center; gap:0.5rem; font-weight:500;">
+          <input type="checkbox" name="use_web" />
+          allow web fallback
+        </label>
+
+        <label style="font-weight:500;">
+          reasoning model:
+          <select name="reasoner">
+            <option value="gemini" selected>Gemini (fast)</option>
+            <option value="groq">Groq / Llama 70B (deep)</option>
+          </select>
+        </label>
+      </div>
+
+      <div style="margin-top:1rem;">
+        <button type="submit">Ask</button>
+      </div>
+    </form>
+    <small>
+      We'll retrieve relevant chunks from Qdrant, optionally blend web snippets,
+      rerank, and generate an answer with citations.
+    </small>
+  </div>
+
+  <p style="text-align:center; color:#777; font-size:0.8rem;">
+    Backend: FastAPI + Qdrant + Gemini/Groq · Frontend: Flask · Local demo mode
+  </p>
+
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Answer · Agentic RAG</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 2rem auto; line-height: 1.5; }
+    .card {
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 2rem;
+      background: #fafafa;
+    }
+    pre {
+      white-space: pre-wrap;
+      background:#111;
+      color:#eee;
+      padding:1rem;
+      border-radius:6px;
+      font-size:0.85rem;
+      overflow-x:auto;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 0.9rem;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 0.5rem 0.6rem;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f3f4f6;
+    }
+    a.back {
+      display:inline-block;
+      margin-bottom:1rem;
+      text-decoration:none;
+      background:#4f46e5;
+      color:#fff;
+      padding:0.5rem 0.75rem;
+      font-size:0.9rem;
+      border-radius:6px;
+    }
+    a.back:hover { background:#4338ca; }
+    small { color:#555; font-size:0.8rem; }
+  </style>
+</head>
+<body>
+
+  <a class="back" href="{{ url_for('home') }}">← Back</a>
+
+  <div class="card">
+    <h2>Answer</h2>
+    <p><strong>Question:</strong> {{ result.question }}</p>
+    <p><strong>Answered by:</strong> {{ result.model_used_for_answer }}</p>
+    <p><strong>Used web?</strong> {{ "yes" if result.used_web else "no" }}</p>
+
+    <h3 style="margin-top:1rem;">Response</h3>
+    <pre>{{ result.answer }}</pre>
+    <small>
+      The answer includes inline citations like [1], [2] referring to sources below.
+    </small>
+  </div>
+
+  <div class="card">
+    <h2>Sources & Chunks</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Source</th>
+          <th>Chunk Preview</th>
+        </tr>
+      </thead>
+      <tbody>
+        {# Jinja doesn't support Python's enumerate(), but it gives us loop.index #}
+        {% for ctx in result.contexts %}
+        <tr>
+          <td style="width:3rem;">[{{ loop.index }}]</td>
+          <td style="width:25%;">
+            {{ ctx.source }}
+            {% if ctx.chunk_id is not none %}
+              <br/><small>chunk {{ ctx.chunk_id }}</small>
+            {% endif %}
+          </td>
+          <td>
+            {{ ctx.text[:400] }}{% if ctx.text|length > 400 %}...{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h3 style="margin-top:2rem;">Citation Map (debug)</h3>
+    <pre>{{ result.citations | tojson(indent=2) }}</pre>
+  </div>
+
+  <p style="text-align:center; color:#777; font-size:0.8rem;">
+    Retrieved top {{ result.k_used }} / overfetch {{ result.overfetch }} · reranker {{ result.rerank_model }}
+  </p>
+
+</body>
+</html>
