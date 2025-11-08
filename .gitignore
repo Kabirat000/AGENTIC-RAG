@@ -6,6 +6,9 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.mypy_cache/
+.pytest_cache/
+.coverage
 
 # --- Virtual env ---
 .venv/
@@ -14,6 +17,7 @@ build/
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
 
 # --- Logs & runtime ---
 *.log
@@ -24,7 +28,13 @@ Thumbs.db
 *.env
 
 # --- Local data/docs (keep out of git) ---
-docs/*.pdf
-docs/*.txt
-uploads/
+# Ignore everything in docs except the keep file
+docs/*
+!docs/.gitkeep
+
+# Ignore everything in uploads except the keep file
+uploads/*
+!uploads/.gitkeep
+
+# Other local data
 data/
