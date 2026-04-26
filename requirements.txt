@@ -25,6 +25,7 @@ beautifulsoup4
 
 # Retrieval / reranking stack
 sentence-transformers
+--extra-index-url https://download.pytorch.org/whl/cpu
 torch
 
 # Optional (validation helpers; FastAPI uses it)
