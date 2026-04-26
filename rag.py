@@ -8,7 +8,7 @@
 import os, glob, hashlib, sys, logging
 from typing import List, Dict, Tuple, Optional
 
-from dotenv import load_dotenv
+from decouple import config
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 import google.generativeai as genai
@@ -43,22 +43,21 @@ if not logger.handlers:
 # -------------------------------------------------------------------
 # env / global service clients
 # -------------------------------------------------------------------
-load_dotenv()
 
-API_KEY = os.environ.get("GOOGLE_API_KEY")
+API_KEY = config("GOOGLE_API_KEY")
 if not API_KEY:
-    logger.error("GOOGLE_API_KEY is missing in .env")
+    logger.error("GOOGLE_API_KEY is missing from the environment")
     sys.exit(1)
 
 genai.configure(api_key=API_KEY)
 
-GEN_MODEL_DEFAULT = os.environ.get("GEN_MODEL", "gemini-2.0-flash")
+GEN_MODEL_DEFAULT = config("GEN_MODEL", default="gemini-2.0-flash")
 
-QDRANT_COLLECTION_DEFAULT = os.environ.get("QDRANT_COLLECTION", "docs")
-QDRANT_URL_DEFAULT = os.environ.get("QDRANT_URL", "http://localhost:6333")
+QDRANT_COLLECTION_DEFAULT = config("QDRANT_COLLECTION", default="docs")
+QDRANT_URL_DEFAULT = config("QDRANT_URL", default="http://localhost:6333")
 
 # Optional Tavily web search
-TAVILY_KEY = os.environ.get("TAVILY_API_KEY")
+TAVILY_KEY = config("TAVILY_API_KEY", default=None)
 tavily_client = None
 if TAVILY_KEY:
     try:
@@ -69,8 +68,8 @@ if TAVILY_KEY:
         tavily_client = None
 
 # Optional Groq reasoning model
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-GROQ_MODEL_DEFAULT = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_API_KEY = config("GROQ_API_KEY", default=None)
+GROQ_MODEL_DEFAULT = config("GROQ_MODEL", default="llama-3.3-70b-versatile")
 groq_client = None
 if GROQ_API_KEY:
     try:
@@ -81,9 +80,9 @@ if GROQ_API_KEY:
         groq_client = None
 
 # reranker model name
-RERANK_MODEL_DEFAULT = os.environ.get(
+RERANK_MODEL_DEFAULT = config(
     "RERANK_MODEL",
-    "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    default="cross-encoder/ms-marco-MiniLM-L-6-v2"
 )
 
 # keywords for boosting compliance / withdrawal style questions

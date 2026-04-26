@@ -8,7 +8,7 @@ python-multipart   # file uploads (forms)
 requests
 
 # Env/config management
-python-dotenv
+python-decouple
 
 # Vector database client
 qdrant-client
